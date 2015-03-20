@@ -1,0 +1,505 @@
+<!doctype><html><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Voices On the Land</title>
+  <meta name="description" content="">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="icon" type="image/x-icon" href="odyssey/sandbox/favicon.png">
+  <link rel="icon" type="image/png" href="http://voicesontheland.org/projects/ce_atlas/group_images/Okanagan_Nation_Alliance949_3.jpg">
+
+  <!--Odyssey and Leaflet Links-->
+  <link rel="stylesheet" href="http://cartodb-libs.global.ssl.fastly.net/cartodb.js/v3/themes/css/cartodb.css">
+  <link rel="stylesheet" href="odyssey/sandbox/css/slides.css">
+  <script src="odyssey/vendor/modernizr-2.6.2.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="leaflet/leaflet.css" />
+  <script type="text/javascript" src="leaflet/leaflet.js"></script>
+  
+  <!--Links to php scripts which convert postgres data to geojson-->  
+  <script src="http://voicesontheland.org/media/alex2.php"></script><!--Converts media table with videos to geojsonpoint-->
+  <!--Options: geotable - table name, fields - fields to include, varname  - javascript variable name-->
+  <script src="http://voicesontheland.org/media/alex.php?srid=4326&geotable=ona_boundary_line&fields=left_fid&varname=boundaryline"></script>
+  <script src="http://voicesontheland.org/media/alex.php?srid=4326&geotable=ona_landuseplan_boundary&fields=id&varname=lup"></script>
+  <script src="http://voicesontheland.org/media/alex.php?srid=4326&geotable=ona_ir&fields=nglshnm&varname=geojsonreserves"></script>
+  <script src="http://voicesontheland.org/media/alex.php?srid=4326&geotable=place_name_areas_new_4326&fields=name&varname=placenames"></script>
+  
+  
+</head>
+<body>
+  <div id="map" style="width: 100%; height: 100%;"></div>
+
+  <div id="slides_container" style="display:block;">
+    <div id="dots"></div>
+
+    <div id="slides"></div>
+
+    <ul id="navButtons">
+      <li><a class="prev"></a></li>
+      <li><a class="next"></a></li>
+    </ul>
+  </div>
+
+  <div id="credits">
+    <!--<span class="title" id="title">Title</span>-->
+    <span class="author"><strong id="author">Built with</strong> <a href="http://cartodb.github.io/odyssey.js/">Odyssey.js</a><span>
+  </span></span></div>
+
+  <!--More Odyssey, and Leaflet Plugins-->
+  <script src="http://cartodb-libs.global.ssl.fastly.net/cartodb.js/v3/cartodb.js"></script>
+  <script src="odyssey/dist/odyssey.js" charset="UTF-8"></script>
+  <link rel="stylesheet" href="leaflet/marker/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="leaflet/marker/dist/MarkerCluster.Default.css" />
+  <script src="leaflet/marker/dist/leaflet.markercluster-src.js"></script>
+  <link rel="stylesheet" href="leaflet/label/dist/leaflet.label.css"/>
+  <script src="leaflet/label/src/Label.js"</script>
+  <script src="leaflet/label/src/BaseMarkerMethods.js"></script>
+  <script src="leaflet/label/src/Marker.Label.js"></script>
+  <script src="leaflet/label/src/CircleMarker.Label.js"></script>
+  <script src="leaflet/label/src/Path.Label.js"></script>
+  <script src="leaflet/label/src/Map.Label.js"></script>
+  <script src="leaflet/label/src/FeatureGroup.Label.js"></script>
+  
+  <link rel="stylesheet" href="leaflet/minimap/src/Control.MiniMap.css" />
+  <script src="leaflet/minimap/src/Control.MiniMap.js"></script>
+  
+  <link rel="stylesheet" href="leaflet/mouseposition/src/L.Control.MousePosition.css" />
+  <script src="leaflet/mouseposition/src/L.Control.MousePosition.js"></script>
+
+  <script>
+    var resizePID;
+
+    function clearResize() {
+      clearTimeout(resizePID);
+      resizePID = setTimeout(function() { adjustSlides(); }, 100);
+    }
+
+    if (!window.addEventListener) {
+      window.attachEvent("resize", function load(event) {
+        clearResize();
+      });
+    } else {
+      window.addEventListener("resize", function load(event) {
+        clearResize();
+      });
+    }
+
+    function adjustSlides() {
+      var container = document.getElementById("slides_container"),
+          slide = document.querySelectorAll('.selected_slide')[0];
+
+      if (slide) {
+        if (slide.offsetHeight+169+40+80 >= window.innerHeight) {
+          container.style.bottom = "80px";
+
+          var h = container.offsetHeight;
+
+          slide.style.height = h-169+"px";
+          slide.classList.add("scrolled");
+        } else {
+          container.style.bottom = "auto";
+          container.style.minHeight = "0";
+
+          slide.style.height = "auto";
+          slide.classList.remove("scrolled");
+        }
+      }
+    }
+
+    var resizeAction = O.Action(function() {
+      function imageLoaded() {
+        counter--;
+
+        if (counter === 0) {
+          adjustSlides();
+        }
+      }
+      var images = $('img');
+      var counter = images.length;
+
+      images.each(function() {
+        if (this.complete) {
+          imageLoaded.call( this );
+        } else {
+          $(this).one('load', imageLoaded);
+        }
+      });
+    });
+
+    function click(el) {
+      var element = O.Core.getElement(el);
+      var t = O.Trigger();
+
+      // TODO: clean properly
+      function click() {
+        t.trigger();
+      }
+
+      if (element) element.onclick = click;
+
+      return t;
+    }
+
+    O.Template({
+      init: function() {
+        var seq = O.Triggers.Sequential();
+
+		/*
+		 * Adds the basemap
+		 */
+        var baseurl = this.baseurl = 'http://{s}.tiles.mapbox.com/v4/mapbox.streets/{z}/{x}/{y}.png?access_token=pk.eyJ1IjoiYWxleC1hbm5lam9obiIsImEiOiI1RUlqSWJBIn0.jjngxL3yuZ9zl9RGjqfr9w';
+		var attribution = 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="http://mapbox.com">Mapbox</a>'; 
+        var map = this.map = L.map('map').setView([50.485316, -119.518520], 7);
+        var basemap = this.basemap = L.tileLayer(baseurl, {
+          attribution: attribution
+        }).addTo(map);
+		
+		/*
+		 * Shows coordinates of mouse
+		 */
+		L.control.mousePosition().addTo(map);
+		
+		
+		/*
+		 * Inset Map
+		 */
+		var boundaryStyleinset = {
+			"color": "#595EB5",
+			"weight": 2,
+			"opacity": 0.6
+		};
+		var line1 = L.geoJson(boundaryline, {style: boundaryStyleinset});
+		var lupStyleinset = {
+			"color": "#8C2823",
+			"weight": 2,
+			"opacity": 0.6,
+			"fillOpacity": 0
+		};
+		var line2 = L.geoJson(lup, {style: lupStyleinset});
+		var osm2 = new L.tileLayer(baseurl, {
+        attribution: attribution,
+        maxZoom: 13
+        });
+		var layers = new L.LayerGroup([osm2, line1, line2]);
+		var miniMap = new L.Control.MiniMap(layers, { toggleDisplay: true }).addTo(map);
+		
+		
+		
+		//WMS layers
+		/*var coyote = L.tileLayer.wms("http://voicesontheland.org/cgi-bin/ce_atlas.cgi", {
+		layers: 'Coyote Landmark Areas 2',
+		format: 'image/png',
+		transparent: true
+		});
+		coyote.addTo(map);*/
+		
+		
+		/*
+		 * boundary lines
+		 */
+		var boundaryStyle = {
+			"color": "#595EB5",
+			"weight": 3,
+			"opacity": 0.6
+		};
+		L.geoJson(boundaryline, {style: boundaryStyle}).addTo(map);
+		var lupStyle = {
+			"color": "#8C2823",
+			"weight": 3,
+			"opacity": 0.6,
+			"fillOpacity": 0
+		};
+		L.geoJson(lup, {style: lupStyle}).addTo(map);
+		
+		
+		/*
+		 * reserves with display box
+		 */
+		function style(feature) {
+			return {
+				fillColor: '#AD59B5',
+				weight: 1,
+				opacity: 1,
+				color: '#36023B',
+				fillOpacity: 0.3
+			};
+		}
+		var geojson
+		function highlightFeature(e) {
+			var layer = e.target;
+
+			layer.setStyle({
+				weight: 2,
+				color: '#666',
+				dashArray: '',
+				fillOpacity: 0.3
+			});
+
+			/*if (!L.Browser.ie && !L.Browser.opera) {
+				layer.bringToFront();
+			}*/
+			info.update(layer.feature.properties);
+		}
+		function resetHighlight(e) {
+			geojson.resetStyle(e.target);
+			info.update();
+		}
+		function onEachFeature(feature, layer) {
+			layer.on({
+				mouseover: highlightFeature,
+				mouseout: resetHighlight,
+			});
+		}	
+		geojson = L.geoJson(geojsonreserves, {style: style, onEachFeature: onEachFeature}).addTo(map);
+		var info = L.control();
+		info.onAdd = function (map) {
+			this._div = L.DomUtil.create('div', 'info'); // create a div with a class "info"
+			this._div.style.width = "120px";
+			this._div.style.height = "50px";
+			this.update();
+			return this._div;
+		};
+		info.update = function (props) {
+			this._div.innerHTML = '<h4>area: </h4>'  +  (props ?
+        ' ' + props.nglshnm + ' '
+        : ' ');
+		};
+		info.addTo(map);
+		
+		
+		/*
+		 * place names
+		 */ 
+		function AddLabel(feature, layer) {
+			
+			if (feature.properties && feature.properties.name) {
+				layer.bindLabel(feature.properties.name, { noHide: true }).addTo(map);
+			}
+		}
+		var placenameStyle = {
+			"color": "#6076B3",
+			"opacity": 0,
+			"fillOpacity": 0.5
+		};
+		L.geoJson(placenames, {style: placenameStyle, onEachFeature: AddLabel}).addTo(map).bringToFront();		
+		
+		
+		/*
+		 * markers with video pop up 
+		 */
+		function AddPopUp(feature, layer) {
+			
+			if (feature.properties && feature.properties.right) {
+				layer.bindPopup('<iframe width="288" height="162" src=' + '"' + 'https://www.youtube.com/embed/' +feature.properties.right +'?feature=player_detailpage'  +'"' + 'frameborder="0" allowfullscreen></iframe>');
+			}
+		}
+		var markers = L.markerClusterGroup();
+		var JsonLayer = L.geoJson(videos, {
+			onEachFeature: AddPopUp
+		});
+		markers.addLayer(JsonLayer);
+		map.addLayer(markers);
+		
+		
+		/*
+		 * add a legend
+		 */
+		var legend = L.control({position: 'topright'});
+		legend.onAdd = function (map) {
+
+			var div = L.DomUtil.create('div', 'info legend');
+			div.style.width = "120px";
+			div.style.height = "120px";
+			div.innerHTML = 'Legend<br>'
+			div.innerHTML += '<i style="background: #AD59B5"></i> reserves <br>';
+			div.innerHTML += '<l style="background: #8C2823"></l> Land Use Planning Boundary <br> ';
+			div.innerHTML += '<l style="background: #595EB5"></l> ONA Territory <br> ';
+			div.innerHTML += '<i style="background: #6076B3"></i> Places <br> ';
+			return div;
+		};
+		legend.addTo(map);
+		
+		var title = L.control();
+		title.onAdd = function (map) {
+
+			var div = L.DomUtil.create('div', 'title');
+			div.style.width = "200px";
+			div.style.height = "20px";
+			div.innerHTML = 'Voices On The Land<br>'
+			return div;
+		};
+		title.addTo(map);
+		
+
+		
+		/*
+		 * scale bar
+		 */
+		var scale = L.control.scale({position: 'bottomright'});
+		scale.addTo(map); 
+		
+
+        // enable keys to move
+        O.Keys().on('map').left().then(seq.prev, seq)
+        O.Keys().on('map').right().then(seq.next, seq)
+
+        click(document.querySelectorAll('.next')).then(seq.next, seq)
+        click(document.querySelectorAll('.prev')).then(seq.prev, seq)
+
+        var slides = O.Actions.Slides('slides');
+        var story = O.Story()
+
+        this.story = story;
+        this.seq = seq;
+        this.slides = slides;
+        this.progress = O.UI.DotProgress('dots').count(0);
+      },
+
+      update: function(actions) {
+        var self = this;
+
+        if (!actions.length) return;
+
+        this.story.clear();
+
+        if (this.baseurl && (this.baseurl !== actions.global.baseurl)) {
+          this.baseurl = actions.global.baseurl || 'http://{s}.tiles.mapbox.com/v4/mapbox.streets/{z}/{x}/{y}.png?access_token=pk.eyJ1IjoiYWxleC1hbm5lam9obiIsImEiOiI1RUlqSWJBIn0.jjngxL3yuZ9zl9RGjqfr9w';
+
+          this.basemap.setUrl(this.baseurl);
+        }
+
+        this._resetActions(actions);
+      },
+
+      _resetActions: function(actions) {
+        // update footer title and author
+        var //title_ = actions.global.title === undefined ? '' : actions.global.title,
+            author_ = actions.global.author === undefined ? 'Using' : 'By '+actions.global.author+' using';
+
+        //document.getElementById('title').innerHTML = title_;
+        //document.getElementById('author').innerHTML = author_;
+        //document.title = title_ + " | " + author_ +' Odyssey.js';
+
+        var sl = actions;
+
+        document.getElementById('slides').innerHTML = ''
+        this.progress.count(sl.length);
+
+        // create new story
+        for(var i = 0; i < sl.length; ++i) {
+          var slide = sl[i];
+          var tmpl = "<div class='slide' style='diplay:none'>";
+
+          tmpl += slide.html();
+          tmpl += "</div>";
+          document.getElementById('slides').innerHTML += tmpl;
+
+          this.progress.step(i).then(this.seq.step(i), this.seq)
+
+          var actions = O.Parallel(
+            this.slides.activate(i),
+            slide(this),
+            this.progress.activate(i),
+            resizeAction
+          );
+
+          actions.on("finish.app", function() {
+            adjustSlides();
+          });
+
+          this.story.addState(
+            this.seq.step(i),
+            actions
+          )
+        }
+
+        this.story.go(this.seq.current());
+      },
+
+      changeSlide: function(n) {
+        this.seq.current(n);
+      }
+    });
+  </script>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+    ga('create', 'UA-20934186-21', 'cartodb.github.io');
+    ga('send', 'pageview');
+  </script>
+
+  <script type="text/javascript" src="http://fast.fonts.net/jsapi/3af16084-ba56-49ca-b37d-0b49b59e1927.js"></script>
+
+<script type="text/template" id="md_template">```
+-title: "VOTL"
+-author: "ecotrust"
+```
+
+#Okanagan Nation Territory
+```
+- center: [50.485316, -119.518520]
+- zoom: 7
+```
+Welcome to the Okanagan Nation Alliance.  Click on the arrows at the bottom of this box to view the bands which make up the alliance.
+
+
+#Upper Nicola Band
+```
+- center: [50.141730, -120.785737]
+- zoom: 10
+```
+To view the name of a reserve area, hover over it with your mouse. The name will display in the top right corner of the map.
+![UNB](http://www.syilx.org/wordpress/wp-content/uploads/2010/11/unib_logo.gif)
+
+Nicola
+
+#Okanagan Indian Band
+```
+- center: [50.356162, -119.319863]
+- zoom: 10
+```
+
+![OKIB](http://www.syilx.org/wordpress/wp-content/uploads/2010/11/okib_logo.png)
+
+#Westbank First Nation
+```
+- center: [49.882108, -119.534552]
+- zoom: 10
+```
+
+![WFN](http://www.syilx.org/wordpress/wp-content/uploads/2010/11/wfn_logo.png)
+
+#Penticton Indian Band
+```
+- center: [49.480076, -119.601690]
+- zoom: 10
+```
+Hover over Places to view their names.
+![PIB](http://www.syilx.org/wordpress/wp-content/uploads/2010/11/pib_logo.png)
+
+#Osoyoos Indian Band
+```
+- center: [49.181749, -119.535686]
+- zoom: 10
+```
+Click on markers to open videos about the area.
+![OIB](http://www.syilx.org/wordpress/wp-content/uploads/2010/11/oib_logo.png)
+
+#Lower Similkameen Indian Band
+```
+- center: [49.207326, -119.832317]
+- zoom: 10
+```
+![LSIB](http://www.syilx.org/wordpress/wp-content/uploads/2010/11/lsib_logo.png)
+
+#Upper Similkameen Indian Band
+```
+- center: [49.356317, -120.079440]
+- zoom: 10
+```
+![USIB](http://www.syilx.org/wordpress/wp-content/uploads/2010/11/usib_logo.png)
+
+</script></body></html>
